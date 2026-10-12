@@ -404,9 +404,66 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
         "home" => goto_line_start,
         "end" => goto_line_end_newline,
     });
-    hashmap!(
+    let mut map = hashmap!(
         Mode::Normal => normal,
         Mode::Select => select,
         Mode::Insert => insert,
-    )
+    );
+    for trie in map.values_mut() {
+        add_mcp_keys(trie);
+    }
+    map
+}
+
+/// Standard MCP bindings shared by every mode:
+/// F12 connects Mirage, F11 opens the MCP manager.
+pub const MCP_KEYS: &[(&str, &str)] = &[("F12", ":mcp-connect mirage"), ("F11", ":mcp")];
+
+fn add_mcp_keys(trie: &mut KeyTrie) {
+    if let Some(node) = trie.node_mut() {
+        for (key, cmd) in MCP_KEYS {
+            let key = key.parse::<helix_view::input::KeyEvent>().unwrap();
+            let cmd = cmd.parse::<crate::commands::MappableCommand>().unwrap();
+            node.insert(key, KeyTrie::MappableCommand(cmd));
+        }
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+    use crate::commands::{typed::TYPABLE_COMMAND_MAP, MappableCommand};
+
+    #[test]
+    fn mcp_commands_registered() {
+        for name in [
+            "mcp",
+            "mcp-connect",
+            "mcp-disconnect",
+            "mcp-status",
+            "mcp-tools",
+            "mcp-call",
+            "mcp-config",
+        ] {
+            assert!(TYPABLE_COMMAND_MAP.contains_key(name), "{name} missing");
+        }
+    }
+
+    #[test]
+    fn mcp_function_keys_in_all_modes() {
+        let map = default();
+        for mode in [Mode::Normal, Mode::Select, Mode::Insert] {
+            let trie = &map[&mode];
+            for (key, expected) in [("F12", ("mcp-connect", "mirage")), ("F11", ("mcp", ""))] {
+                let key = key.parse::<helix_view::input::KeyEvent>().unwrap();
+                match trie.search(&[key]) {
+                    Some(KeyTrie::MappableCommand(MappableCommand::Typable { name, args, .. })) => {
+                        assert_eq!(name, expected.0);
+                        assert_eq!(args.trim(), expected.1);
+                    }
+                    other => panic!("{mode:?} {key:?}: {other:?}"),
+                }
+            }
+        }
+    }
 }

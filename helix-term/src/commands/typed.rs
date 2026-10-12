@@ -18,6 +18,10 @@ use ui::completers::{self, Completer};
 
 use std::fmt::Write;
 
+#[path = "mcp.rs"]
+pub(crate) mod mcp_ui;
+use mcp_ui::{mcp_call, mcp_config, mcp_connect, mcp_disconnect, mcp_manager, mcp_status, mcp_tools};
+
 #[derive(Clone)]
 pub struct TypableCommand {
     pub name: &'static str,
@@ -4125,6 +4129,62 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: exclude_workspace,
         completer: CommandCompleter::none(),
         signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp",
+        aliases: &[],
+        doc: "Open the MCP manager (connect Mirage, status, tools, edit config).",
+        fun: mcp_manager,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), raw_after: None, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-connect",
+        aliases: &[],
+        doc: "Connect to an MCP server (default: mirage).",
+        fun: mcp_connect,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(1)), raw_after: None, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-disconnect",
+        aliases: &[],
+        doc: "Disconnect an MCP server (default: mirage).",
+        fun: mcp_disconnect,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(1)), raw_after: None, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-status",
+        aliases: &[],
+        doc: "Show MCP server connection status.",
+        fun: mcp_status,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), raw_after: None, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-tools",
+        aliases: &[],
+        doc: "List tools of an MCP server in a scratch buffer (default: mirage).",
+        fun: mcp_tools,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(1)), raw_after: None, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-call",
+        aliases: &[],
+        doc: "Call an MCP tool: :mcp-call <server> <tool> [json]. Result opens in a scratch buffer.",
+        fun: mcp_call,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (2, Some(3)), raw_after: Some(2), ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "mcp-config",
+        aliases: &[],
+        doc: "Open the user MCP config (mcp.toml), creating an example if absent.",
+        fun: mcp_config,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), raw_after: None, ..Signature::DEFAULT },
     }
 ];
 
