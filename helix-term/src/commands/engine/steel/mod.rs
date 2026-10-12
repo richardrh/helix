@@ -41,7 +41,7 @@ use helix_view::{
     theme::Color,
     DocumentId, Editor, Theme, ViewId,
 };
-use once_cell::sync::{Lazy, OnceCell};
+use std::sync::{LazyLock as Lazy, OnceLock as OnceCell};
 use serde_json::Value;
 use steel::{
     compiler::modules::steel_home,

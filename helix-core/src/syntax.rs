@@ -50,11 +50,11 @@ impl Clone for LanguageData {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            syntax: OnceCell::new(),
-            indent_query: OnceCell::new(),
-            textobject_query: OnceCell::new(),
-            tag_query: OnceCell::new(),
-            rainbow_query: OnceCell::new(),
+            syntax: OnceLock::new(),
+            indent_query: OnceLock::new(),
+            textobject_query: OnceLock::new(),
+            tag_query: OnceLock::new(),
+            rainbow_query: OnceLock::new(),
         }
     }
 }
