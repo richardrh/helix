@@ -9,7 +9,8 @@ fully **isolated profile**. Your real `~/.config/helix`, `~/.cache/helix`,
 | File | Purpose |
 | --- | --- |
 | `hx-evil` | Launcher. Sets up isolated XDG/Steel dirs, fetches the plugin if needed, then execs `hx`. |
-| `fetch-vim-hx.sh` | Downloads vim.hx at a pinned commit into the local cache. |
+| `fetch-vim-hx.sh` | Downloads vim.hx at a pinned commit into the local cache (staged, verified, never deletes your checkout). |
+| `test-fetch-vim-hx.sh` | Offline safety tests for the fetch script (local git fixture, no network). |
 | `profile/config.toml` | Isolated Helix config, including the MCP keys (F11/F12). |
 | `profile/init.scm` | Loads vim.hx and calls `(set-vim-keybindings!)`. |
 | `profile/helix.scm` | Steel module for typed commands (empty). |
@@ -47,8 +48,17 @@ into `~/.cargo/bin`, which isn't needed here.)
 ```sh
 contrib/steel-evil/hx-evil [file ...]       # launch
 contrib/steel-evil/hx-evil --print-env      # show resolved paths, don't launch
-contrib/steel-evil/fetch-vim-hx.sh --force  # re-fetch the plugin
+contrib/steel-evil/fetch-vim-hx.sh          # install pinned plugin (no-op if already clean at pin)
+contrib/steel-evil/fetch-vim-hx.sh --force  # replace a modified/other-rev checkout (old one kept as vim-hx.bak-<timestamp>)
+contrib/steel-evil/test-fetch-vim-hx.sh     # offline safety tests
 ```
+
+`fetch-vim-hx.sh` downloads into a private staging dir next to the cache and
+checks the SHA and the required files before installing anything. If the
+download or a check fails, the existing cache is left untouched. An existing
+checkout at a different revision, with local edits, or that isn't a git
+checkout is never replaced without `--force`. Even with `--force` it's renamed
+to a timestamped backup, not deleted.
 
 Environment knobs:
 
@@ -130,19 +140,19 @@ counterparts and insert-mode `Esc` / `C-d` / `C-t`.
 
 ## Known limitations (be honest)
 
-* **Burst input loss (Steel branch bug, not vim.hx).** While any Steel command
-  runs, the Steel Ctrl-C watchdog thread in
-  `helix-term/src/commands/engine/steel/mod.rs` reads and *discards* every
-  pending terminal event (it polls and reads with an accept-all filter). Keys
-  that arrive in the same burst as a Steel-bound key are lost. For example,
-  pasting or typing `ciwchanged<Esc>` very fast, or `wwbb`, drops keys. Normal
-  human typing speed works. Automated tests must pace keystrokes. The fix is
-  to filter only Ctrl-C in that thread's `poll`/`read`, which is tracked
-  separately because it's a Rust change.
+* **Burst input loss: fixed in this fork.** On the upstream Steel branch,
+  the Ctrl-C watchdog thread in `helix-term/src/commands/engine/steel/mod.rs`
+  polled and read the terminal with an accept-all filter while any Steel
+  command ran. That discarded keys typed ahead of a Steel-bound key, for
+  example `ciwchanged<Esc>` sent in one burst. This fork filters for a Ctrl-C
+  press only (commit `74f46486a`, with unit tests), so other events stay
+  queued. `contrib/test-steel-evil.py` covers both burst and paced input. If
+  you run `hx-evil` against a binary built from the unpatched upstream Steel
+  branch, keys can still drop.
 * **No license** upstream (see above), so this is runtime download only.
 * **Upstream is stale.** 2 commits (2026-03-08). Fixes such as `A I o O r s J ~ * #`,
   `H M L`, `D C`, `{ }`, `zz/zt/zb`, `; ,` and linewise `yy`/`p` exist only in
-  unmerged PRs #2/#3 (the RoastBeefer00 fork, also unlicensed). To try them:
+  unmerged PRs #2/#3 (the RoastBeefer00 fork, also unlicensed). To try them (a modified or other-rev checkout needs `--force`, which keeps a backup):
   `VIM_HX_REPO=https://github.com/RoastBeefer00/vim.hx.git VIM_HX_REV=1202a46cc9a25df160ff3d312f6c067903fdfbaa contrib/steel-evil/fetch-vim-hx.sh --force`.
 * **Partial Vim coverage.** No counts (`3dw`), no `.` repeat, no Vim
   registers/macros semantics, no `:s` / ex-command parity, no marks. Several
