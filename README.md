@@ -1,3 +1,7 @@
+> **Steel + Evil + MCP integration fork:** start with [FORK.md](FORK.md) for building,
+> the isolated Vim-style profile, and [MCP.md](MCP.md) for Mirage dev/prod connections.
+> F11 opens the MCP manager, F12 connects Mirage. This is not an upstream release.
+
 <div align="center">
 
 <h1>

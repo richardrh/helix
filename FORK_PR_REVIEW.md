@@ -1,9 +1,9 @@
 # Upstream PR review for the steel-evil fork
 
 Reviewed on 2026-10-12 against open `helix-editor/helix` PRs, using `gh pr view/checks/diff`.
-This was read-only. Nothing has been merged.
+Decision: cherry-picked #16290 as `659acf7bd` and #16274 as `1c5940029`, preserving original authors. Both are small regression fixes. The other candidates below remain deferred.
 
-Constraint: avoid `helix-term/src/commands/typed.rs`, the keymap code and `application.rs`, because other agents are editing those files.
+Selection constraint: prefer isolated core fixes over changes to typed commands, keymaps or application startup, where this fork adds Steel/Evil/MCP integration.
 Both recommended PRs touch only `helix-core`.
 
 ## Recommended (merge candidates)
@@ -37,7 +37,13 @@ Both recommended PRs touch only `helix-core`.
 
 Not considered because they are broad architectural changes: #16260 (debounced edit handler), #16252 (`editor.diff-base`), #16280 (flush writes before shell commands), #16294 (LSP refresh after config reload).
 
-## Cherry-pick commands (not run)
+## Integration and validation
+
+The following imports were applied successfully. `cargo test -p helix-core --lib`
+passed all **170 tests**, including the imported regression cases, on macOS arm64
+on 2026-10-12.
+
+### Reproduction commands
 
 ```sh
 git fetch https://github.com/helix-editor/helix pull/16290/head pull/16274/head

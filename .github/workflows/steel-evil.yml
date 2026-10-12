@@ -1,0 +1,39 @@
+name: Steel Evil MCP fork
+
+on:
+  push:
+    branches: [steel-evil]
+  pull_request:
+    branches: [steel-evil]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: stable
+          cache-key: steel-evil-mcp
+          cache-grammars: 'true'
+      - name: Core and client regression tests
+        run: |
+          cargo test --locked -p helix-core --lib
+          cargo test --locked -p helix-term --lib
+      - name: Editor integration suite
+        run: cargo test --locked -p helix-term --features integration --test integration
+      - name: Build the real editor
+        run: cargo build --locked -p helix-term
+      - name: Real-terminal Evil plugin regression tests
+        run: python3 contrib/test-steel-evil.py
+      - name: Optional-engine compatibility
+        run: cargo check --locked -p helix-term --no-default-features
