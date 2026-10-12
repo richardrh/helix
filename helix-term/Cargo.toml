@@ -31,7 +31,7 @@ assets = [
 ]
 
 [features]
-default = ["git"] # Add steel here for development
+default = ["git", "steel"]
 unicode-lines = ["helix-core/unicode-lines", "helix-view/unicode-lines"]
 integration = ["helix-event/integration_test"]
 git = ["helix-vcs/git"]
@@ -87,7 +87,11 @@ serde = { version = "1.0", features = ["derive"] }
 
 # plugin support
 steel-core = { workspace = true, optional = true }
-steel-doc = { git = "https://github.com/mattwparas/steel.git", optional = true }
+steel-doc = { git = "https://github.com/mattwparas/steel.git", rev = "24cd21598c091fb88bc10a6375a1ded25e677c37", optional = true }
+
+# MCP client (official Rust SDK)
+rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest", "transport-child-process"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 globset = "0.4.16"
 dashmap = "6.2"
