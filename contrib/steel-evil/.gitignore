@@ -1,0 +1,3 @@
+# Local state for hx-evil: isolated XDG dirs, STEEL_HOME and the downloaded
+# (unlicensed, not vendored) vim.hx plugin.
+/.local/

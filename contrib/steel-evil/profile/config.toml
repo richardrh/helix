@@ -1,0 +1,29 @@
+# Isolated profile config for contrib/steel-evil/hx-evil.
+# Copied to $HELIX_STEEL_EVIL_HOME/config/helix/config.toml on first launch
+# (HX_EVIL_RESET_PROFILE=1 re-copies). Never touches ~/.config/helix.
+
+theme = "default"
+
+[editor]
+line-number = "relative"
+mouse = true
+
+[editor.cursor-shape]
+insert = "bar"
+normal = "block"
+select = "underline"
+
+# MCP controls. The typed commands come from the steel-evil MCP integration, see MCP.md.
+# Unknown ":commands" are accepted by the TOML parser as plugin commands.
+# init.scm re-applies the same keys after (set-vim-keybindings!) as a safety net.
+[keys.normal]
+F11 = ":mcp"
+F12 = ":mcp-connect mirage"
+
+[keys.select]
+F11 = ":mcp"
+F12 = ":mcp-connect mirage"
+
+[keys.insert]
+F11 = ":mcp"
+F12 = ":mcp-connect mirage"

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Launch the Steel-enabled hx with vim.hx keybindings in an isolated profile.
+# Your real ~/.config/helix, ~/.cache/helix and ~/.steel are never read or written.
+#
+# Usage: contrib/steel-evil/hx-evil [hx args...]
+#        contrib/steel-evil/hx-evil --print-env   (show resolved paths, do not launch)
+# Env:
+#   HX_BIN                 hx binary (default: target/release/hx, then target/debug/hx)
+#   HELIX_STEEL_EVIL_HOME  state dir (default: contrib/steel-evil/.local)
+#   HX_EVIL_RESET_PROFILE=1  overwrite profile files from contrib/steel-evil/profile
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+STATE="${HELIX_STEEL_EVIL_HOME:-$SCRIPT_DIR/.local}"
+mkdir -p "$STATE"
+STATE="$(cd "$STATE" && pwd)"
+
+if [[ -n "${HX_BIN:-}" ]]; then
+  hx="$HX_BIN"
+elif [[ -x "$REPO_ROOT/target/release/hx" ]]; then
+  hx="$REPO_ROOT/target/release/hx"
+elif [[ -x "$REPO_ROOT/target/debug/hx" ]]; then
+  hx="$REPO_ROOT/target/debug/hx"
+else
+  hx=""
+fi
+
+export XDG_CONFIG_HOME="$STATE/config"
+export XDG_CACHE_HOME="$STATE/cache"
+export XDG_DATA_HOME="$STATE/data"
+export XDG_STATE_HOME="$STATE/state"
+export HELIX_STEEL_CONFIG="$XDG_CONFIG_HOME/helix"
+export STEEL_HOME="$STATE/steel"
+export STEEL_LSP_HOME="$STEEL_HOME/lsp"
+export HELIX_RUNTIME="${HELIX_RUNTIME:-$REPO_ROOT/runtime}"
+
+cfg="$HELIX_STEEL_CONFIG"
+mkdir -p "$cfg" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$STEEL_HOME/cogs/helix" "$STEEL_LSP_HOME"
+for f in config.toml init.scm helix.scm; do
+  if [[ ! -f "$cfg/$f" || "${HX_EVIL_RESET_PROFILE:-0}" == 1 ]]; then
+    cp "$SCRIPT_DIR/profile/$f" "$cfg/$f"
+  fi
+done
+
+if [[ ! -f "$STEEL_HOME/cogs/vim-hx/init.scm" ]]; then
+  HELIX_STEEL_EVIL_HOME="$STATE" "$SCRIPT_DIR/fetch-vim-hx.sh"
+fi
+
+if [[ "${1:-}" == "--print-env" ]]; then
+  cat <<EOF
+HX_BIN=${hx:-<not built>}
+XDG_CONFIG_HOME=$XDG_CONFIG_HOME
+XDG_CACHE_HOME=$XDG_CACHE_HOME
+XDG_DATA_HOME=$XDG_DATA_HOME
+HELIX_STEEL_CONFIG=$HELIX_STEEL_CONFIG
+STEEL_HOME=$STEEL_HOME
+HELIX_RUNTIME=$HELIX_RUNTIME
+VIM_HX=$STEEL_HOME/cogs/vim-hx @ $(git -C "$STEEL_HOME/cogs/vim-hx" rev-parse HEAD 2>/dev/null || echo '?')
+EOF
+  exit 0
+fi
+
+if [[ -z "$hx" ]]; then
+  echo "error: no hx binary. Build it first:" >&2
+  echo "  cargo build -p helix-term --features steel             (debug)" >&2
+  echo "  cargo build -p helix-term --features steel --release" >&2
+  echo "or set HX_BIN=/path/to/steel/hx" >&2
+  exit 1
+fi
+
+exec "$hx" --config "$cfg/config.toml" "$@"
