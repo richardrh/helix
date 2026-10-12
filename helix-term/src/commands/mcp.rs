@@ -65,7 +65,11 @@ pub fn format_status() -> String {
     status
         .iter()
         .map(|s| {
-            let state = if s.connected { "connected" } else { "disconnected" };
+            let state = if s.connected {
+                "connected"
+            } else {
+                "disconnected"
+            };
             if s.detail.is_empty() {
                 format!("{}: {state}", s.name)
             } else {
@@ -76,7 +80,11 @@ pub fn format_status() -> String {
         .join(", ")
 }
 
-pub fn mcp_connect(cx: &mut compositor::Context, args: Args, ev: PromptEvent) -> anyhow::Result<()> {
+pub fn mcp_connect(
+    cx: &mut compositor::Context,
+    args: Args,
+    ev: PromptEvent,
+) -> anyhow::Result<()> {
     if ev != PromptEvent::Validate {
         return Ok(());
     }
@@ -86,7 +94,11 @@ pub fn mcp_connect(cx: &mut compositor::Context, args: Args, ev: PromptEvent) ->
     Ok(())
 }
 
-pub fn mcp_disconnect(cx: &mut compositor::Context, args: Args, ev: PromptEvent) -> anyhow::Result<()> {
+pub fn mcp_disconnect(
+    cx: &mut compositor::Context,
+    args: Args,
+    ev: PromptEvent,
+) -> anyhow::Result<()> {
     if ev != PromptEvent::Validate {
         return Ok(());
     }
@@ -102,7 +114,11 @@ pub fn mcp_disconnect(cx: &mut compositor::Context, args: Args, ev: PromptEvent)
     Ok(())
 }
 
-pub fn mcp_status(cx: &mut compositor::Context, _args: Args, ev: PromptEvent) -> anyhow::Result<()> {
+pub fn mcp_status(
+    cx: &mut compositor::Context,
+    _args: Args,
+    ev: PromptEvent,
+) -> anyhow::Result<()> {
     if ev != PromptEvent::Validate {
         return Ok(());
     }
@@ -118,9 +134,14 @@ fn tools_job(jobs: &mut Jobs, name: String) {
             .map(|tools| {
                 let mut out = format!("# MCP tools on '{name}' ({})\n\n", tools.len());
                 for t in tools {
-                    out.push_str(&format!("- {}: {}\n", t.name, t.description));
+                    out.push_str(&format!("## {}\n\n{}\n\n", t.name, t.description));
+                    let schema = serde_json::to_string_pretty(&t.input_schema)
+                        .unwrap_or_else(|_| "{}".into());
+                    out.push_str(&format!("Input schema:\n```json\n{schema}\n```\n\n"));
                 }
-                out.push_str(&format!("\nInvoke with :mcp-call {name} <tool> <json-args>\n"));
+                out.push_str(&format!(
+                    "\nInvoke with :mcp-call {name} <tool> <json-args>\n"
+                ));
                 out
             })
             .map_err(|e| format!("MCP {name}: {e}"));
@@ -141,15 +162,22 @@ pub fn mcp_call(cx: &mut compositor::Context, args: Args, ev: PromptEvent) -> an
     if ev != PromptEvent::Validate {
         return Ok(());
     }
-    let server = args.first().map(|s| s.to_string()).ok_or_else(|| anyhow!("usage: :mcp-call <server> <tool> [json]"))?;
-    let tool = args.get(1).map(|s| s.to_string()).ok_or_else(|| anyhow!("usage: :mcp-call <server> <tool> [json]"))?;
+    let server = args
+        .first()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("usage: :mcp-call <server> <tool> [json]"))?;
+    let tool = args
+        .get(1)
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("usage: :mcp-call <server> <tool> [json]"))?;
     let raw = args.get(2).unwrap_or("").to_string();
     let json: Value = if raw.trim().is_empty() {
         Value::Object(Default::default())
     } else {
         serde_json::from_str(&raw).map_err(|_| anyhow!("MCP: arguments must be valid JSON"))?
     };
-    cx.editor.set_status(format!("MCP {server}: calling {tool}..."));
+    cx.editor
+        .set_status(format!("MCP {server}: calling {tool}..."));
     cx.jobs.callback(async move {
         let res = crate::mcp::global()
             .call_tool(&server, &tool, json)
@@ -161,6 +189,41 @@ pub fn mcp_call(cx: &mut compositor::Context, args: Args, ev: PromptEvent) -> an
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(line: &str) -> (String, String, Option<String>) {
+        let cmd = TYPABLE_COMMAND_MAP["mcp-call"];
+        let args = Args::parse(line, cmd.signature, true, |t| Ok(t.content)).unwrap();
+        (
+            args[0].to_string(),
+            args[1].to_string(),
+            args.get(2).map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn mcp_call_preserves_raw_json() {
+        let (s, t, raw) = parse(r#"mirage docs_search {"query":"hello world"}"#);
+        assert_eq!((s.as_str(), t.as_str()), ("mirage", "docs_search"));
+        let raw = raw.unwrap();
+        assert_eq!(raw, r#"{"query":"hello world"}"#);
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["query"], "hello world");
+
+        let (_, _, raw) = parse(r#"mirage docs_search { "query" : "a  b", "n": 2 }"#);
+        let v: Value = serde_json::from_str(&raw.unwrap()).unwrap();
+        assert_eq!(v["query"], "a  b");
+        assert_eq!(v["n"], 2);
+
+        let (_, _, raw) = parse("mirage docs_outline {}");
+        assert_eq!(raw.as_deref(), Some("{}"));
+        let (_, _, raw) = parse("mirage docs_outline");
+        assert!(raw.is_none());
+    }
+}
+
 /// Open the trusted user mcp.toml, creating it from examples if absent.
 pub fn open_config(editor: &mut Editor) -> anyhow::Result<()> {
     let path = crate::mcp::config_path();
@@ -170,7 +233,11 @@ pub fn open_config(editor: &mut Editor) -> anyhow::Result<()> {
         }
         // create_new: never overwrite an existing file.
         use std::io::Write as _;
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut f) => f.write_all(crate::mcp::EXAMPLE_CONFIG.as_bytes())?,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e.into()),
@@ -180,7 +247,11 @@ pub fn open_config(editor: &mut Editor) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn mcp_config(cx: &mut compositor::Context, _args: Args, ev: PromptEvent) -> anyhow::Result<()> {
+pub fn mcp_config(
+    cx: &mut compositor::Context,
+    _args: Args,
+    ev: PromptEvent,
+) -> anyhow::Result<()> {
     if ev != PromptEvent::Validate {
         return Ok(());
     }
@@ -205,7 +276,11 @@ pub const MANAGER_ACTIONS: &[(ManagerAction, &str)] = &[
 ];
 
 /// `:mcp` manager picker.
-pub fn mcp_manager(cx: &mut compositor::Context, _args: Args, ev: PromptEvent) -> anyhow::Result<()> {
+pub fn mcp_manager(
+    cx: &mut compositor::Context,
+    _args: Args,
+    ev: PromptEvent,
+) -> anyhow::Result<()> {
     if ev != PromptEvent::Validate {
         return Ok(());
     }
