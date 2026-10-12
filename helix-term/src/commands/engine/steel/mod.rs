@@ -41,8 +41,8 @@ use helix_view::{
     theme::Color,
     DocumentId, Editor, Theme, ViewId,
 };
-use std::sync::{LazyLock as Lazy, OnceLock as OnceCell};
 use serde_json::Value;
+use std::sync::{LazyLock as Lazy, OnceLock as OnceCell};
 use steel::{
     compiler::modules::steel_home,
     gc::{unsafe_erased_pointers::CustomReference, ShareableMut},
@@ -138,6 +138,75 @@ fn identifier_available_at_startup(ident: &str) -> bool {
         .contains(&interned)
 }
 
+/// Whether a terminal event should interrupt a running Steel command.
+///
+/// Used as the `termina` reader filter in the interrupt watchdog thread. Events
+/// rejected by the filter remain queued, so only a Ctrl-C *press* is consumed
+/// and every other event (keys typed ahead, escape, resize, Ctrl-C release...)
+/// is still delivered to the editor afterwards.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn is_interrupt_event(event: &termina::Event) -> bool {
+    matches!(
+        event,
+        termina::Event::Key(termina::event::KeyEvent {
+            code: termina::event::KeyCode::Char('c'),
+            modifiers: termina::event::Modifiers::CONTROL,
+            kind: termina::event::KeyEventKind::Press,
+            ..
+        })
+    )
+}
+
+#[cfg(test)]
+mod interrupt_filter_tests {
+    use super::is_interrupt_event;
+    use termina::event::{KeyCode, KeyEvent, KeyEventKind, Modifiers};
+    use termina::{Event, WindowSize};
+
+    fn key(code: KeyCode, modifiers: Modifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    #[test]
+    fn ctrl_c_press_interrupts() {
+        assert!(is_interrupt_event(&key(
+            KeyCode::Char('c'),
+            Modifiers::CONTROL
+        )));
+    }
+
+    #[test]
+    fn ctrl_c_release_and_repeat_are_kept() {
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut ev = KeyEvent::new(KeyCode::Char('c'), Modifiers::CONTROL);
+            ev.kind = kind;
+            assert!(!is_interrupt_event(&Event::Key(ev)), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_input_is_kept() {
+        for ev in [
+            key(KeyCode::Char('c'), Modifiers::NONE),
+            key(KeyCode::Char('C'), Modifiers::SHIFT),
+            key(KeyCode::Char('w'), Modifiers::NONE),
+            key(KeyCode::Char('x'), Modifiers::CONTROL),
+            key(KeyCode::Char('c'), Modifiers::CONTROL | Modifiers::ALT),
+            key(KeyCode::Escape, Modifiers::NONE),
+            key(KeyCode::Enter, Modifiers::NONE),
+            Event::WindowResized(WindowSize {
+                rows: 24,
+                cols: 80,
+                pixel_width: None,
+                pixel_height: None,
+            }),
+            Event::FocusIn,
+        ] {
+            assert!(!is_interrupt_event(&ev), "{ev:?}");
+        }
+    }
+}
+
 fn setup() -> Engine {
     let engine = steel::steel_vm::engine::Engine::new();
 
@@ -163,10 +232,13 @@ fn setup() -> Engine {
 
         #[cfg(unix)]
         {
+            // Only look for Ctrl-C. Any other pending events (ordinary keys,
+            // escape, resize, ...) must stay queued for the editor's own event
+            // loop, otherwise typed-ahead input is lost while a Steel command runs.
             EVENT_READER
                 .get()
                 .unwrap()
-                .poll(Some(Duration::from_millis(0)), |_| true)
+                .poll(Some(Duration::from_millis(0)), is_interrupt_event)
         }
     }
 
@@ -186,14 +258,9 @@ fn setup() -> Engine {
             while running.load(std::sync::atomic::Ordering::Relaxed) {
                 #[cfg(unix)]
                 if is_event_available().unwrap_or(false) {
-                    let event = EVENT_READER.get().unwrap().read(|_| true);
-
-                    if let Ok(termina::Event::Key(termina::event::KeyEvent {
-                        code: termina::event::KeyCode::Char('c'),
-                        modifiers: termina::event::Modifiers::CONTROL,
-                        ..
-                    })) = event
-                    {
+                    // The filter guarantees this consumes only a Ctrl-C press;
+                    // all other events are retained by the reader.
+                    if EVENT_READER.get().unwrap().read(is_interrupt_event).is_ok() {
                         controller.interrupt();
                         break;
                     }
