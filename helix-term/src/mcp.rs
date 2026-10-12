@@ -199,7 +199,7 @@ impl McpConfig {
         let prod_mode = match mode.as_str() {
             "dev" | "local" => false,
             "prod" | "production" => true,
-            other => return Err(format!("invalid mirage_mode, expected dev or prod")),
+            _ => return Err("invalid mirage_mode, expected dev or prod".into()),
         };
         let mut servers = builtin_servers();
         for (name, user) in file.servers {
