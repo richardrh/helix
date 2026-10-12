@@ -56,17 +56,16 @@ pub const EXAMPLE_CONFIG: &str = r#"# ~/.config/helix/mcp.toml
 # "dev" (default) auto-connects the local Mirage cluster, "prod" the production endpoint.
 mirage_mode = "dev"
 
-# Override the built-in Mirage dev server (token: $MIRAGE_MCP_TOKEN or token_file).
+# Built-in Mirage dev server (token: $MIRAGE_MCP_TOKEN, or uncomment token_file).
 [servers.mirage]
 url = "http://127.0.0.1:7345/mcp"
-token_file = "~/path/to/mirage/.dev/docs-mcp.token"
+# token_file = "~/path/to/docs-mcp.token"
 auto_connect = true
 
 # Production: HTTPS required, key read from $MIRAGE_ACCESS_KEY.
-[servers.mirage-prod]
-url = "https://mirage.example.com/mcp"
-token_env = "MIRAGE_ACCESS_KEY"
-require_auth = true
+# URL from $MIRAGE_PROD_MCP_URL (takes precedence) or set it here.
+# [servers.mirage-prod]
+# url = "https://<your-mirage-host>/mcp"
 
 # A local stdio server (only spawned on explicit connect unless auto_connect = true).
 # [servers.files]
@@ -180,7 +179,16 @@ impl McpConfig {
     pub fn from_toml(text: Option<&str>, env_mode: Option<String>) -> Result<Self, String> {
         let file: McpFile = match text {
             Some(t) => {
-                toml::from_str(t).map_err(|e| format!("invalid mcp.toml: {}", e.message()))?
+                toml::from_str(t).map_err(|e: toml::de::Error| {
+                    // Never echo values (a key may be pasted in the wrong slot).
+                    match e.span() {
+                        Some(sp) => format!(
+                            "invalid mcp.toml (line {})",
+                            t[..sp.start.min(t.len())].matches('\n').count() + 1
+                        ),
+                        None => "invalid mcp.toml".to_string(),
+                    }
+                })?
             }
             None => McpFile::default(),
         };
@@ -191,11 +199,7 @@ impl McpConfig {
         let prod_mode = match mode.as_str() {
             "dev" | "local" => false,
             "prod" | "production" => true,
-            other => {
-                return Err(format!(
-                    "invalid mirage_mode '{other}', expected dev or prod"
-                ))
-            }
+            other => return Err(format!("invalid mirage_mode, expected dev or prod")),
         };
         let mut servers = builtin_servers();
         for (name, user) in file.servers {
@@ -206,7 +210,16 @@ impl McpConfig {
                     let floor_auth = base.require_auth;
                     let base_env = base.token_env.clone();
                     *base = ServerConfig {
-                        url: user.url.or(base.url.take()),
+                        // Env URL wins so a stale file URL can't receive the key.
+                        url: if user.command.is_some() {
+                            user.url
+                        } else {
+                            base.url
+                                .take()
+                                .filter(|_| name == MIRAGE_PROD)
+                                .or(user.url)
+                                .or(base.url.take())
+                        },
                         token_env: user.token_env.or(base_env),
                         require_https: user.require_https || floor_https,
                         require_auth: user.require_auth || floor_auth,
@@ -223,7 +236,8 @@ impl McpConfig {
         for (name, s) in servers.iter_mut() {
             s.auto_connect = Some(match name.as_str() {
                 // Only the mode-selected Mirage entry may auto-connect.
-                MIRAGE => !prod_mode && s.auto_connect.unwrap_or(true),
+                // Stdio commands never auto-spawn unless explicitly enabled.
+                MIRAGE => !prod_mode && s.auto_connect.unwrap_or(s.command.is_none()),
                 MIRAGE_PROD => prod_mode && s.auto_connect.unwrap_or(true),
                 _ => s.auto_connect.unwrap_or(false),
             });
@@ -254,7 +268,7 @@ impl McpConfig {
 fn is_local_host(host: &str) -> bool {
     let h = host.trim_start_matches('[').trim_end_matches(']');
     match h.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private(),
+        Ok(IpAddr::V4(ip)) => ip.is_loopback(),
         Ok(IpAddr::V6(ip)) => ip.is_loopback(),
         Err(_) => h.eq_ignore_ascii_case("localhost"),
     }
@@ -795,10 +809,7 @@ mod tests {
         let prod = EXAMPLE_CONFIG.replace("mirage_mode = \"dev\"", "mirage_mode = \"prod\"");
         let m = McpManager::with_config(McpConfig::from_toml(Some(&prod), None).unwrap());
         assert_eq!(m.autoconnect_servers(), vec![MIRAGE_PROD.to_string()]);
-        let off = format!("{prod}\n").replace(
-            "require_auth = true",
-            "require_auth = true\nauto_connect = false",
-        );
+        let off = format!("{prod}\n[servers.mirage-prod]\nauto_connect = false\n");
         let m = McpManager::with_config(McpConfig::from_toml(Some(&off), None).unwrap());
         assert!(
             m.autoconnect_servers().is_empty(),
@@ -807,6 +818,23 @@ mod tests {
         );
         let m = McpManager::with_config(McpConfig::from_toml(Some(EXAMPLE_CONFIG), None).unwrap());
         assert_eq!(m.autoconnect_servers(), vec![MIRAGE.to_string()]);
+    }
+
+    #[test]
+    fn config_errors_hide_values_and_stdio_not_autospawned() {
+        let e = McpConfig::from_toml(Some("[servers.x]\nauto_connect = \"sk-SECRET\""), None)
+            .unwrap_err();
+        assert!(!e.contains("SECRET") && e.contains("line 2"), "{e}");
+        let e = McpConfig::from_toml(None, Some("sk-SECRET".into())).unwrap_err();
+        assert!(!e.contains("SECRET"));
+        let c = McpConfig::from_toml(Some("[servers.mirage]\nurl = \"\"\ncommand = \"x\""), None);
+        assert!(c.is_err()); // url + command
+        let c = McpConfig::from_toml(Some("[servers.files]\ncommand = \"x\""), None).unwrap();
+        assert_eq!(c.servers["files"].auto_connect, Some(false));
+        let ex = McpConfig::from_toml(Some(EXAMPLE_CONFIG), None).unwrap();
+        assert!(ex.servers[MIRAGE].token_file.is_none());
+        let c = McpConfig::from_toml(Some("[servers.mirage]\ncommand = \"x\""), None).unwrap();
+        assert_eq!(c.servers[MIRAGE].auto_connect, Some(false));
     }
 
     #[test]
@@ -829,7 +857,7 @@ mod tests {
         assert!(validate_http_url("https://host/mcp", true, true).is_ok());
         assert!(validate_http_url("http://127.0.0.1:7345/mcp", true, false).is_ok());
         assert!(validate_http_url("http://localhost/mcp", true, false).is_ok());
-        assert!(validate_http_url("http://10.0.0.2/mcp", true, false).is_ok());
+        assert!(validate_http_url("http://10.0.0.2/mcp", true, false).is_err());
         assert!(validate_http_url("http://example.com/mcp", true, false).is_err());
         assert!(validate_http_url("http://example.com/mcp", false, false).is_ok());
         assert!(validate_http_url("http://127.0.0.1/mcp", false, true).is_err());
