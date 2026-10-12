@@ -16,7 +16,6 @@ use helix_view::{
     Editor,
 };
 use tempfile::NamedTempFile;
-use termina::event::{Event, KeyEvent};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[cfg(windows)]
@@ -302,6 +301,10 @@ pub fn test_config() -> Config {
 
 pub fn test_editor_config() -> helix_view::editor::Config {
     helix_view::editor::Config {
+        // These tests exercise built-in editing with deterministic keymaps.
+        // Never load a developer's personal Steel initialization scripts.
+        // Steel/Evil itself is covered by the isolated real-terminal tests.
+        enable_steel: false,
         lsp: LspConfig {
             enable: false,
             ..Default::default()

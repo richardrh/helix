@@ -20,7 +20,9 @@ use std::fmt::Write;
 
 #[path = "mcp.rs"]
 pub(crate) mod mcp_ui;
-use mcp_ui::{mcp_call, mcp_config, mcp_connect, mcp_disconnect, mcp_manager, mcp_status, mcp_tools};
+use mcp_ui::{
+    mcp_call, mcp_config, mcp_connect, mcp_disconnect, mcp_manager, mcp_status, mcp_tools,
+};
 
 #[derive(Clone)]
 pub struct TypableCommand {

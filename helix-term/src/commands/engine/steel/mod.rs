@@ -106,13 +106,13 @@ static EVENT_READER: OnceCell<EventReader> = OnceCell::new();
 static CTX: &str = "*helix.cx*";
 static CONFIG: &str = "*helix.config*";
 
-fn install_event_reader(event_reader: TerminalEventReaderHandle) {
+fn install_event_reader(_event_reader: TerminalEventReaderHandle) {
     #[cfg(feature = "integration")]
     {}
 
     #[cfg(all(not(windows), not(feature = "integration")))]
     {
-        EVENT_READER.set(event_reader.reader).ok();
+        EVENT_READER.set(_event_reader.reader).ok();
     }
 }
 
@@ -1424,15 +1424,49 @@ fn load_high_level_keymap_api(engine: &mut Engine, generate_sources: bool) {
     engine.register_steel_module("helix/keymaps.scm".to_string(), keymap.to_string());
 }
 
-fn generate_module(filename: &str, module: &str) {
-    if let Some(mut target_directory) = alternative_runtime_search_path() {
-        if !target_directory.exists() {
-            std::fs::create_dir_all(&target_directory).unwrap();
+// These are editor-generated LSP stubs. The runtime registers the same modules
+// in memory, so an absent or unwritable cache must not crash editor startup.
+fn write_generated_source(path: &std::path::Path, source: &str) {
+    let result = (|| -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        std::fs::write(path, source)
+    })();
+    if let Err(error) = result {
+        log::warn!(
+            "Unable to write generated Steel source {}: {}",
+            path.display(),
+            error
+        );
+    }
+}
 
-        target_directory.push(filename);
+fn generate_module(filename: &str, module: &str) {
+    if let Some(target_directory) = alternative_runtime_search_path() {
+        write_generated_source(&target_directory.join(filename), module);
+    }
+}
 
-        std::fs::write(target_directory, module).unwrap();
+#[cfg(test)]
+mod generated_source_tests {
+    use super::write_generated_source;
+
+    #[test]
+    fn creates_missing_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/lsp/builtins.scm");
+        write_generated_source(&path, "(define example 1)");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "(define example 1)");
+    }
+
+    #[test]
+    fn unavailable_cache_does_not_panic_or_overwrite_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("not-a-directory");
+        std::fs::write(&parent, "preserve me").unwrap();
+        write_generated_source(&parent.join("builtins.scm"), "generated");
+        assert_eq!(std::fs::read_to_string(parent).unwrap(), "preserve me");
     }
 }
 
@@ -3833,7 +3867,7 @@ fn configure_lsp_globals() {
         .unwrap();
     }
 
-    std::fs::write(path, output).unwrap();
+    write_generated_source(&path, &output);
 }
 
 fn configure_lsp_builtins(name: &str, module: &BuiltInModule) {
@@ -3870,7 +3904,7 @@ fn configure_lsp_builtins(name: &str, module: &BuiltInModule) {
         }
     }
 
-    std::fs::write(path, output).unwrap();
+    write_generated_source(&path, &output);
 }
 
 fn load_rope_api(engine: &mut Engine, generate_sources: bool) {
@@ -4167,12 +4201,11 @@ pub fn alternative_runtime_search_path() -> Option<PathBuf> {
 
 pub fn generate_cog_file() {
     if let Some(path) = alternative_runtime_search_path() {
-        std::fs::write(
-            path.join("cog.scm"),
+        write_generated_source(
+            &path.join("cog.scm"),
             r#"(define package-name 'helix)
             (define version "0.1.0")"#,
-        )
-        .unwrap();
+        );
     }
 }
 
@@ -4191,15 +4224,10 @@ pub fn steel_lsp_home_dir() -> PathBuf {
         return PathBuf::from(home);
     }
 
-    let mut home_directory =
-        PathBuf::from(steel_home().expect("Unable to find steel home location"));
-    home_directory.push("lsp");
-
-    if !home_directory.exists() {
-        std::fs::create_dir_all(&home_directory).expect("Unable to create the lsp home directory");
-    }
-
-    home_directory
+    steel_home()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| helix_loader::cache_dir().join("steel"))
+        .join("lsp")
 }
 
 pub fn configure_builtin_sources(engine: &mut Engine, generate_sources: bool) {

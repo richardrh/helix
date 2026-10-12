@@ -146,6 +146,9 @@ impl Application {
 
         let mut jobs = Jobs::new();
         // Background MCP auto-connect: never blocks editing, failures only set status.
+        // Tests must not contact a developer's configured servers or replace
+        // command status messages with asynchronous network errors.
+        #[cfg(not(any(test, feature = "integration")))]
         crate::commands::typed::mcp_ui::autoconnect(&mut jobs);
         {
             let syn_loader = editor.syn_loader.clone();

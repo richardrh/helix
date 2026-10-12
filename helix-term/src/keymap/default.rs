@@ -457,7 +457,9 @@ mod mcp_tests {
             for (key, expected) in [("F12", ("mcp-connect", "mirage")), ("F11", ("mcp", ""))] {
                 let key = key.parse::<helix_view::input::KeyEvent>().unwrap();
                 match trie.search(&[key]) {
-                    Some(KeyTrie::MappableCommand(MappableCommand::Typable { name, args, .. })) => {
+                    Some(KeyTrie::MappableCommand(MappableCommand::Typable {
+                        name, args, ..
+                    })) => {
                         assert_eq!(name, expected.0);
                         assert_eq!(args.trim(), expected.1);
                     }
