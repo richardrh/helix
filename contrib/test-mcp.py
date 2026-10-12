@@ -148,10 +148,8 @@ class Editor:
             if not k.startswith(("MIRAGE_", "XDG_", "HELIX_", "STEEL_", "HX_"))
         }
         steel = self.home / "steel"
-        # Steel writes generated modules here and panics if missing (hx-evil does the same).
-        for d in (steel / "cogs/helix", steel / "lsp", self.home / ".cache",
-                  self.home / ".local/share", self.home / ".local/state"):
-            d.mkdir(parents=True, exist_ok=True)
+        # Env paths only: the raw scenarios verify that startup creates Steel's
+        # generated-stub directories itself (hx-evil prepares its own profile).
         child_env.update(
             TERM="xterm-256color",
             HOME=str(self.home),
