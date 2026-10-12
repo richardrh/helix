@@ -37,6 +37,98 @@ F12 = b"\x1b[24~"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78]")
 
 
+def squash(s):
+    return re.sub(r"\s+", "", s)
+
+
+CSI = re.compile(rb"\x1b\[([0-9;?:<=>]*)([ -/]*)([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP.*?\x1b\\|\x1b[()][0-9A-B]|\x1b[=>78]", re.S)
+
+
+class Screen:
+    """Tiny terminal emulator: enough of CUP/ED/EL/cursor moves for crossterm diffs."""
+
+    def __init__(self, rows=40, cols=200):
+        self.rows, self.cols = rows, cols
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.r = self.c = 0
+        self.pending = b""
+
+    def feed(self, data):
+        data = self.pending + data
+        self.pending = b""
+        i = 0
+        while i < len(data):
+            b = data[i]
+            if b == 0x1b:
+                m = CSI.match(data, i)
+                if not m:
+                    if len(data) - i < 64:
+                        self.pending = data[i:]
+                        return
+                    i += 1
+                    continue
+                if m.group(3):
+                    self.csi(m.group(1).decode(), m.group(3).decode())
+                i = m.end()
+                continue
+            if b == 0x0d:
+                self.c = 0
+            elif b == 0x0a:
+                self.r = min(self.r + 1, self.rows - 1)
+            elif b == 0x08:
+                self.c = max(self.c - 1, 0)
+            elif b >= 0x20:
+                n = 1 if b < 0x80 else (2 if b >= 0xF0 or b < 0xE0 else 3) if b >= 0xC0 else 1
+                if b >= 0xF0:
+                    n = 4
+                if i + n > len(data):
+                    self.pending = data[i:]
+                    return
+                ch = data[i:i + n].decode("utf-8", "replace")
+                if self.c < self.cols:
+                    self.grid[self.r][self.c] = ch
+                self.c += 1
+                i += n
+                continue
+            i += 1
+
+    def csi(self, params, final):
+        if params.startswith(("?", "<", ">", "=")):
+            return
+        nums = [int(p) if p.isdigit() else 0 for p in params.replace(":", ";").split(";")] if params else []
+        a = nums[0] if nums else 0
+        if final in "Hf":
+            self.r = min(max((nums[0] if nums else 1) - 1, 0), self.rows - 1)
+            self.c = min(max((nums[1] if len(nums) > 1 else 1) - 1, 0), self.cols - 1)
+        elif final == "G":
+            self.c = max(a - 1, 0)
+        elif final == "d":
+            self.r = min(max(a - 1, 0), self.rows - 1)
+        elif final == "A":
+            self.r = max(self.r - max(a, 1), 0)
+        elif final == "B":
+            self.r = min(self.r + max(a, 1), self.rows - 1)
+        elif final == "C":
+            self.c = min(self.c + max(a, 1), self.cols - 1)
+        elif final == "D":
+            self.c = max(self.c - max(a, 1), 0)
+        elif final == "J":
+            if a == 2 or a == 3:
+                self.grid = [[" "] * self.cols for _ in range(self.rows)]
+            elif a == 0:
+                self.grid[self.r][self.c:] = [" "] * (self.cols - self.c)
+                for r in range(self.r + 1, self.rows):
+                    self.grid[r] = [" "] * self.cols
+        elif final == "K":
+            if a == 0:
+                self.grid[self.r][self.c:] = [" "] * (self.cols - self.c)
+            elif a == 2:
+                self.grid[self.r] = [" "] * self.cols
+
+    def text(self):
+        return "\n".join("".join(row) for row in self.grid)
+
+
 class Editor:
     def __init__(self, state, name, mcp_toml, env=None, evil=False):
         self.name = name
@@ -48,6 +140,7 @@ class Editor:
         (cfg / "mcp.toml").write_text(mcp_toml)
         self.log = state / f"{name}.terminal.log"
         self.output = bytearray()
+        self.screen = Screen()
         self.mark = 0
         self.reaped = False
         child_env = {
@@ -55,6 +148,10 @@ class Editor:
             if not k.startswith(("MIRAGE_", "XDG_", "HELIX_", "STEEL_", "HX_"))
         }
         steel = self.home / "steel"
+        # Steel writes generated modules here and panics if missing (hx-evil does the same).
+        for d in (steel / "cogs/helix", steel / "lsp", self.home / ".cache",
+                  self.home / ".local/share", self.home / ".local/state"):
+            d.mkdir(parents=True, exist_ok=True)
         child_env.update(
             TERM="xterm-256color",
             HOME=str(self.home),
@@ -93,6 +190,7 @@ class Editor:
             if not data:
                 return
             self.output.extend(data)
+            self.screen.feed(data)
             if b"\x1b[6n" in data:
                 os.write(self.fd, b"\x1b[1;1R")
             if b"\x1b[c" in data or b"\x1b[0c" in data:
@@ -101,7 +199,9 @@ class Editor:
                 os.write(self.fd, b"\x1b]11;rgb:0000/0000/0000\x1b\\")
 
     def text(self, since=0):
-        return ANSI.sub(b"", bytes(self.output[since:])).decode("utf-8", "replace")
+        # Current screen contents, whitespace squashed so wrapped/padded
+        # status lines still match. `since` is unused (screen is a snapshot).
+        return squash(self.screen.text())
 
     def wait_for(self, needles, timeout=20, since=None, forbid=()):
         since = self.mark if since is None else since
@@ -111,9 +211,9 @@ class Editor:
             self.drain(0.2)
             t = self.text(since)
             for f in forbid:
-                if f in t:
+                if squash(f) in t:
                     raise AssertionError(f"{self.name}: unexpected {f!r} on screen")
-            if all(n in t for n in needles):
+            if all(squash(n) in t for n in needles):
                 return t
             if os.waitpid(self.pid, os.WNOHANG)[0]:
                 self.reaped = True
@@ -171,7 +271,7 @@ def poll_status(ed, want, timeout=20):
     while time.monotonic() < deadline:
         ed.cmd("mcp-status")
         ed.drain(0.6)
-        if want in ed.text(ed.mark):
+        if squash(want) in ed.text(ed.mark):
             return
         ed.drain(0.6)
     raise AssertionError(f"{ed.name}: status never showed {want!r}")
@@ -183,9 +283,7 @@ def main_flow(ed):
     ed.cmd("mcp-tools")
     ed.wait_for(["docs_get", "docs_outline", "docs_search"])
     ed.cmd("mcp-call mirage docs_outline {}")
-    t = ed.wait_for("MCP mirage/docs_outline", forbid=("MCP mirage/docs_outline: ",))
-    ed.drain(0.5)
-    assert len(ed.text(ed.mark).strip()) > 60, "docs_outline produced no content"
+    ed.wait_for(["# MCP mirage/docs_outline", "sections"], forbid=("MCP mirage/docs_outline: ",))
     ed.send(b"\x1b")
     ed.send(F11)
     ed.wait_for("Connect Mirage")
@@ -227,7 +325,7 @@ def disabled_flow(ed):
     t = ed.wait_for("mirage")
     ed.drain(0.5)
     t = ed.text(ed.mark)
-    assert "mirage: connected" not in t, "auto_connect=false was ignored"
+    assert squash("mirage: connected") not in t, "auto_connect=false was ignored"
 
 
 def main():
