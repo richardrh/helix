@@ -140,13 +140,17 @@ Mirage server.
 - Access keys are read from the environment or an explicitly configured token
   file. They are not committed or displayed in connection errors.
 - HTTP redirects are refused to prevent credential forwarding to another host.
-- Authenticated non-local connections require HTTPS. Production always requires
-  HTTPS, including when testing against loopback.
+- Authenticated HTTP is allowed only on loopback (`127.0.0.1`, `::1`, localhost).
+  Use a loopback port-forward for a local cluster, or HTTPS for LAN/remote hosts.
+  Production always requires HTTPS, including when testing against loopback.
 - Startup performs the protocol handshake only. Tool invocation requires an
   explicit `:mcp-call` command. Treat tools as programs that may have side effects.
 - This first integration exposes MCP **tools** only. Resources, prompts, OAuth
   login/discovery, sampling, subscriptions and legacy HTTP+SSE transport are not
   presented as editor features.
 - Network requests have timeouts. Long text results are truncated for display.
-- Connecting does not grant MCP servers access to editor buffers, files or
-  secrets beyond the configured credentials and explicitly supplied tool args.
+- Remote HTTP servers receive only the handshake, configured authentication and
+  explicit tool requests, not editor buffers or filesystem access. Local stdio
+  programs run with your user permissions and inherit the editor's environment,
+  so they can access local files and environment secrets. Treat them as trusted
+  executables, not sandboxed plugins.

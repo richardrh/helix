@@ -55,7 +55,9 @@ authentication, other servers and the limits of this client.
 | Fork additions | Isolated Evil profile, native MCP client and connection manager |
 
 The Steel integration needed a Cargo.lock resolution and adaptation to upstream's
-`OnceLock` migration. Other architectural PRs were deliberately deferred. The
+`OnceLock` migration. This fork also fixes the PR's interrupt watcher consuming
+ordinary queued keystrokes, verified with burst-input terminal tests. Other
+architectural PRs were deliberately deferred. The
 review shortlist and reasons are in [FORK_PR_REVIEW.md](FORK_PR_REVIEW.md).
 
 ## Validation commands
@@ -63,16 +65,39 @@ review shortlist and reasons are in [FORK_PR_REVIEW.md](FORK_PR_REVIEW.md).
 ```sh
 cargo test --locked -p helix-core --lib
 cargo test --locked -p helix-term --lib
-cargo test --locked -p helix-term --features integration --test integration
+cargo test --locked -p helix-term --features integration --profile integration --test integration
 cargo build --locked -p helix-term
 python3 contrib/test-steel-evil.py
 ```
 
-The Python test drives the actual editor in a pseudo-terminal and checks saved
-file contents for operator-first deletion, change and insertion. It uses only
+The Rust editor integration suite tests built-in editing with personal Steel
+scripts disabled, so it cannot load a developer's local plugins. The Python
+test separately drives the actual Steel-enabled editor and Vim plugin in a
+pseudo-terminal, checking saved file contents for operator-first deletion,
+change and insertion, including burst typing. It uses only
 an isolated temporary profile. It requires a POSIX host, Python 3 and network
 access to fetch the pinned Vim plugin on first use. MCP transport tests run
 against local test servers rather than requiring production credentials.
+
+## Verified results (2026-10-12)
+
+Validated locally on macOS ARM64:
+
+- 170 core unit tests, 38 editor unit tests and 177 editor integration tests passed.
+- 34 offline plugin-installer checks passed, including preservation of existing files.
+- Six real-editor Steel/Vim terminal scenarios passed, including burst typing.
+- Four real Mirage docs-MCP terminal scenarios passed: automatic connection,
+  tool listing/calling and connection keys, missing production-key refusal,
+  disabled autoconnect, and the Evil profile's connection keys.
+- Default Steel-enabled build and `--no-default-features` check passed.
+- Fresh-profile startup creates generated Steel directories without preconfiguration.
+
+The live MCP tests used a temporary loopback server and a synthetic token, not
+production credentials. Production HTTPS/access-key enforcement is tested, but
+an actual production Mirage endpoint must still be supplied by its operator.
+The dedicated GitHub workflow reproduces the non-Mirage checks; these local
+results do not imply that hosted CI has already run. Optional-feature builds
+still emit upstream unused-code warnings.
 
 ## Updating
 

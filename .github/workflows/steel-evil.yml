@@ -30,10 +30,12 @@ jobs:
           cargo test --locked -p helix-core --lib
           cargo test --locked -p helix-term --lib
       - name: Editor integration suite
-        run: cargo test --locked -p helix-term --features integration --test integration
+        run: cargo test --locked -p helix-term --features integration --profile integration --test integration
       - name: Build the real editor
         run: cargo build --locked -p helix-term
-      - name: Real-terminal Evil plugin regression tests
-        run: python3 contrib/test-steel-evil.py
+      - name: Plugin installer and real-terminal Evil regression tests
+        run: |
+          bash contrib/steel-evil/test-fetch-vim-hx.sh
+          python3 contrib/test-steel-evil.py
       - name: Optional-engine compatibility
         run: cargo check --locked -p helix-term --no-default-features

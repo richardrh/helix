@@ -25,6 +25,9 @@ def exercise(state, name, initial, keys, expected, burst=False):
     document.write_text(initial)
     pid, fd = pty.fork()
     if pid == 0:
+        for key in tuple(os.environ):
+            if key.startswith("MIRAGE_"):
+                os.environ.pop(key)
         os.environ.update(
             TERM="xterm-256color",
             HELIX_STEEL_EVIL_HOME=str(state / "profile"),
