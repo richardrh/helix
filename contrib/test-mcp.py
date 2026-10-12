@@ -9,6 +9,9 @@ Run after cargo build:
 It only passes the token file *path* to the editor's config. The token is
 never read, printed, or written by this script. The Mirage server should
 expose read-only docs tools (docs_get, docs_outline, docs_search).
+The evil-profile scenario uses contrib/steel-evil/hx-evil (fetches vim.hx on
+first run, needs git/network). Set HELIX_MCP_SKIP_EVIL=1 to skip it.
+All Steel/XDG/HELIX env is isolated under a temp dir, removed on success.
 """
 import errno
 import fcntl
@@ -17,6 +20,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shutil
 import signal
 import struct
 import tempfile
@@ -27,16 +31,19 @@ ROOT = Path(__file__).resolve().parents[1]
 HX = Path(os.environ.get("HX_BIN", ROOT / "target/debug/hx"))
 URL = os.environ.get("HELIX_MCP_URL", "http://127.0.0.1:17345/mcp")
 TOKEN_FILE = os.environ.get("HELIX_MCP_TOKEN_FILE")
+LAUNCHER = ROOT / "contrib/steel-evil/hx-evil"
 F11 = b"\x1b[23~"
 F12 = b"\x1b[24~"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78]")
 
 
 class Editor:
-    def __init__(self, state, name, mcp_toml, env=None):
+    def __init__(self, state, name, mcp_toml, env=None, evil=False):
         self.name = name
         self.home = state / name
-        cfg = self.home / ".config/helix"
+        # hx-evil maps XDG_CONFIG_HOME to <state>/config, raw hx uses <home>/.config.
+        xdg_config = self.home / ("config" if evil else ".config")
+        cfg = xdg_config / "helix"
         cfg.mkdir(parents=True)
         (cfg / "mcp.toml").write_text(mcp_toml)
         self.log = state / f"{name}.terminal.log"
@@ -45,17 +52,30 @@ class Editor:
         self.reaped = False
         child_env = {
             k: v for k, v in os.environ.items()
-            if not k.startswith(("MIRAGE_", "XDG_"))
+            if not k.startswith(("MIRAGE_", "XDG_", "HELIX_", "STEEL_", "HX_"))
         }
-        child_env.update(TERM="xterm-256color", HOME=str(self.home),
-                         XDG_CONFIG_HOME=str(self.home / ".config"),
-                         XDG_CACHE_HOME=str(self.home / ".cache"),
-                         XDG_DATA_HOME=str(self.home / ".local/share"))
+        steel = self.home / "steel"
+        child_env.update(
+            TERM="xterm-256color",
+            HOME=str(self.home),
+            XDG_CONFIG_HOME=str(xdg_config),
+            XDG_CACHE_HOME=str(self.home / ".cache"),
+            XDG_DATA_HOME=str(self.home / ".local/share"),
+            XDG_STATE_HOME=str(self.home / ".local/state"),
+            HELIX_STEEL_CONFIG=str(cfg),
+            STEEL_HOME=str(steel),
+            STEEL_LSP_HOME=str(steel / "lsp"),
+            HELIX_RUNTIME=str(ROOT / "runtime"),
+        )
         child_env.update(env or {})
+        argv = [str(HX)]
+        if evil:
+            child_env.update(HELIX_STEEL_EVIL_HOME=str(self.home), HX_BIN=str(HX))
+            argv = [str(LAUNCHER)]
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.chdir(self.home)
-            os.execve(str(HX), [str(HX)], child_env)
+            os.execve(argv[0], argv, child_env)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 200, 0, 0))
 
     def drain(self, duration):
@@ -109,8 +129,8 @@ class Editor:
         self.send(b"\x1b")
         self.send(b":" + line.encode() + b"\r")
 
-    def ready(self):
-        self.wait_for("NOR", timeout=30, since=0)
+    def ready(self, timeout):
+        self.wait_for("NOR", timeout=timeout, since=0)
         self.drain(0.3)
 
     def close(self, failed):
@@ -129,11 +149,11 @@ class Editor:
             print(f"Terminal transcript: {self.log}", flush=True)
 
 
-def run(state, name, mcp_toml, body, env=None):
-    ed = Editor(state, name, mcp_toml, env)
+def run(state, name, mcp_toml, body, env=None, evil=False):
+    ed = Editor(state, name, mcp_toml, env, evil)
     failed = True
     try:
-        ed.ready()
+        ed.ready(90 if evil else 30)
         body(ed)
         failed = False
         print(f"PASS {name}", flush=True)
@@ -187,6 +207,20 @@ def prod_flow(ed):
     ed.wait_for("mirage-prod: disconnected")
 
 
+def evil_keys_flow(ed):
+    # F11/F12 must survive the vim.hx keymap replacement.
+    poll_status(ed, "mirage: connected")
+    ed.send(b"\x1b")
+    ed.send(F11)
+    ed.wait_for("Connect Mirage")
+    ed.send(b"\x1b")
+    ed.drain(0.3)
+    ed.cmd("mcp-disconnect mirage")
+    ed.wait_for("MCP mirage: disconnected")
+    ed.send(F12)
+    poll_status(ed, "mirage: connected")
+
+
 def disabled_flow(ed):
     ed.drain(3)
     ed.cmd("mcp-status")
@@ -209,7 +243,11 @@ def main():
             'token_env = "MIRAGE_ACCESS_KEY"\nrequire_auth = true\n')
     run(state, "prod-missing-key-refused", prod, prod_flow)
     run(state, "autoconnect-disabled", dev_toml(auto=False), disabled_flow)
-    print("All real-editor MCP smoke tests passed.")
+    if os.environ.get("HELIX_MCP_SKIP_EVIL") != "1":
+        run(state, "evil-profile-keys", dev_toml(), evil_keys_flow, evil=True)
+    # Only our own mkdtemp dir; kept on failure for transcripts.
+    shutil.rmtree(state)
+    print("All real-editor MCP smoke tests passed (isolated state removed).")
 
 
 if __name__ == "__main__":
