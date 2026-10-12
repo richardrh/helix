@@ -2,9 +2,9 @@ name: Steel Evil MCP fork
 
 on:
   push:
-    branches: [steel-evil]
+    branches: [master, steel-evil]
   pull_request:
-    branches: [steel-evil]
+    branches: [master, steel-evil]
   workflow_dispatch:
 
 permissions:

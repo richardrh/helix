@@ -1,12 +1,12 @@
 # Steel + Evil + MCP fork
 
-This is a personal integration fork of Helix, maintained on `steel-evil`. It is
+This is a personal integration fork of Helix, maintained on `master`. It is
 not an upstream Helix release. The original project README follows unchanged.
 
 ## Build and run
 
 ```sh
-git clone --branch steel-evil https://github.com/richardrh/helix.git
+git clone --branch master https://github.com/richardrh/helix.git
 cd helix
 cargo build --locked -p helix-term --release
 ./contrib/steel-evil/hx-evil
@@ -101,8 +101,8 @@ still emit upstream unused-code warnings.
 
 ## Updating
 
-Keep upstream `master` separate from the integration branch. Merge new upstream
-changes into `steel-evil`, update each dependency pin intentionally and run the
+Track the original project's `master` as `upstream/master`. Merge new upstream
+changes into this fork's `master`, update each dependency pin intentionally and run the
 validation above before publishing. Do not blindly update Steel master or
 replace the plugin checkout: its APIs are still evolving. Preserve original
 commit authors when importing upstream fixes.
