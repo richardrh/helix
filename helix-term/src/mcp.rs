@@ -221,12 +221,12 @@ impl McpConfig {
         }
         // Mode selects which Mirage endpoint auto-connects, unless set explicitly.
         for (name, s) in servers.iter_mut() {
-            let default = match name.as_str() {
-                MIRAGE => !prod_mode,
-                MIRAGE_PROD => prod_mode,
-                _ => false,
-            };
-            s.auto_connect = Some(s.auto_connect.unwrap_or(default));
+            s.auto_connect = Some(match name.as_str() {
+                // Only the mode-selected Mirage entry may auto-connect.
+                MIRAGE => !prod_mode && s.auto_connect.unwrap_or(true),
+                MIRAGE_PROD => prod_mode && s.auto_connect.unwrap_or(true),
+                _ => s.auto_connect.unwrap_or(false),
+            });
         }
         if servers
             .get(MIRAGE_PROD)
@@ -472,12 +472,17 @@ impl McpManager {
     /// Names of configured servers marked auto_connect.
     pub fn autoconnect_servers(&self) -> Vec<String> {
         match self.config() {
-            Ok(c) => c
-                .servers
-                .iter()
-                .filter(|(_, s)| s.auto_connect == Some(true))
-                .map(|(n, _)| n.clone())
-                .collect(),
+            Ok(c) => {
+                let mut v: Vec<String> = c
+                    .servers
+                    .iter()
+                    .filter(|(_, s)| s.auto_connect == Some(true))
+                    .map(|(n, _)| self.resolve_name(n))
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            }
             Err(e) => {
                 log::warn!("mcp: {e}");
                 Vec::new()
@@ -783,6 +788,25 @@ mod tests {
         let p = &c.servers[MIRAGE_PROD];
         assert!(p.require_https && p.require_auth);
         assert!(validate_http_url(p.url.as_ref().unwrap(), true, p.require_https).is_err());
+    }
+
+    #[test]
+    fn example_dev_to_prod_no_double_connect() {
+        let prod = EXAMPLE_CONFIG.replace("mirage_mode = \"dev\"", "mirage_mode = \"prod\"");
+        let m = McpManager::with_config(McpConfig::from_toml(Some(&prod), None).unwrap());
+        assert_eq!(m.autoconnect_servers(), vec![MIRAGE_PROD.to_string()]);
+        let off = format!("{prod}\n").replace(
+            "require_auth = true",
+            "require_auth = true\nauto_connect = false",
+        );
+        let m = McpManager::with_config(McpConfig::from_toml(Some(&off), None).unwrap());
+        assert!(
+            m.autoconnect_servers().is_empty(),
+            "{:?}",
+            m.autoconnect_servers()
+        );
+        let m = McpManager::with_config(McpConfig::from_toml(Some(EXAMPLE_CONFIG), None).unwrap());
+        assert_eq!(m.autoconnect_servers(), vec![MIRAGE.to_string()]);
     }
 
     #[test]
